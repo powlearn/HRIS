@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nexahr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexahr}
+      POSTGRES_DB: ${POSTGRES_DB:-nexahr}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexahr} -d ${POSTGRES_DB:-nexahr}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  migrate:
+    build:
+      context: .
+      target: builder
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nexahr}:${POSTGRES_PASSWORD:-nexahr}@db:5432/${POSTGRES_DB:-nexahr}?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Optional: docker compose --profile seed run --rm seed
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+      target: builder
+    command: ["npm", "run", "db:seed"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nexahr}:${POSTGRES_PASSWORD:-nexahr}@db:5432/${POSTGRES_DB:-nexahr}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET wajib diisi}
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  app:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nexahr}:${POSTGRES_PASSWORD:-nexahr}@db:5432/${POSTGRES_DB:-nexahr}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET wajib diisi}
+      AUTH_TRUST_HOST: "true"
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      AI_ALLOW_CONFIDENTIAL_DATA: ${AI_ALLOW_CONFIDENTIAL_DATA:-false}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-30000}
+      MAIL_DRIVER: ${MAIL_DRIVER:-console}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@nexahr.local}
+      UPLOADS_DIR: /app/.uploads
+    volumes:
+      - uploads:/app/.uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  uploads:
